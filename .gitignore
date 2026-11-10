@@ -12,3 +12,8 @@
 
 # Go workspace files
 .env.override
+
+# Local environment and secrets
+.env
+.env.*
+!.env.example
