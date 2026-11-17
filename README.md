@@ -23,21 +23,26 @@
 
 7. В файле `.env.override` (создайте его в корне, если нет) выставьте правильные значения для переменных окружения:
 
-```
+```env
+API_URL=[https://testboard.avito.com/api/v1](https://testboard.avito.com/api/v1)
 TEST_LOGIN=your_login
 TEST_PASSWORD=your_password
+DEBUG=false
 ```
 
-8. Для запуска всех тестов достаточно выполнить команду в корне проекта:
+8. Для последовательного запуска всех тестов (с учётом ограничения частоты одновременных запросов учебного стенда) выполните команду в корне проекта:
 
 ```bash
-  go test -v ./...
+go test -p 1 -count=1 -v ./...
 ```
 
 9. Отдельный пакет с тестами можно запустить командой:
 
 ```bash
-  go test -v ./tests/scenarios/myAdvertisement/
+go test -count=1 -v ./tests/scenarios/advertisementCreate/
+go test -count=1 -v ./tests/scenarios/favorites/
+go test -count=1 -v ./tests/scenarios/advertisementSearch/
+go test -count=1 -v ./tests/scenarios/myAdvertisement/
 ```
 
 ## Логирование
