@@ -24,7 +24,7 @@
 7. В файле `.env.override` (создайте его в корне, если нет) выставьте правильные значения для переменных окружения:
 
 ```env
-API_URL=[https://testboard.avito.com/api/v1](https://testboard.avito.com/api/v1)
+API_URL=https://testboard.avito.com/api/v1
 TEST_LOGIN=your_login
 TEST_PASSWORD=your_password
 DEBUG=false
