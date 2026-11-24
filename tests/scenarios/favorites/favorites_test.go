@@ -14,12 +14,9 @@ import (
 	"api-tests-template/internal/managers/auth"
 	authModels "api-tests-template/internal/managers/auth/models"
 	"api-tests-template/internal/managers/favorites"
-	"api-tests-template/internal/utils"
 	"api-tests-template/tests"
 
-	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
-	"github.com/tidwall/gjson"
 )
 
 const (
@@ -29,6 +26,12 @@ const (
 	secondUserName     = "ТестовыйПродавец"
 	favAdDescription   = "Объявление для проверки функциональности избранного"
 	favAdPrice         = 1990.0
+	testPhotoFile      = "test_photo.png"
+
+	errCodeNotFound      = "not_found"
+	errCodeForbidden     = "forbidden"
+	errCodeAlreadyExists = "already_exists"
+	errCodeUnauthorized  = "unauthorized"
 )
 
 type FavoritesSuite struct {
@@ -58,7 +61,6 @@ func (s *FavoritesSuite) TearDownSuite() {
 // createAdForUser создаёт тестовое объявление от имени пользователя с переданным токеном.
 func (s *FavoritesSuite) createAdForUser(t *testing.T, token string) adModels.Advertisement {
 	t.Helper()
-	photoPath := utils.CreateTempPNGFile(t, "fav_ad.png")
 	price := favAdPrice
 	title := fmt.Sprintf("Товар для избранного %d", time.Now().UnixNano())
 
@@ -66,7 +68,7 @@ func (s *FavoritesSuite) createAdForUser(t *testing.T, token string) adModels.Ad
 		Title:       title,
 		Description: favAdDescription,
 		Price:       &price,
-		PhotoPaths:  []string{photoPath},
+		PhotoPaths:  []string{testPhotoFile},
 	}
 	return advertisements.CreateAdvertisement(t, token, params, http.StatusCreated)
 }
@@ -115,12 +117,12 @@ func (s *FavoritesSuite) TestFavoritesFullLifecyclePositive() {
 func (s *FavoritesSuite) TestFavoritesNonExistentAdNegative() {
 	s.Run("Добавление несуществующего advertisement_id в избранное возвращает 404", func() {
 		body := favorites.AddToFavorites(s.T(), s.mainUser.Token, nonExistentUUID, http.StatusNotFound)
-		require.NotEmpty(s.T(), gjson.GetBytes(body, "error").String(), "Поле error не должно быть пустым")
+		assertions.AssertErrorResponse(s.T(), body, errCodeNotFound, "Advertisement not found", "POST /favorites (несуществующий ID)")
 	})
 
 	s.Run("Удаление несуществующего advertisement_id из избранного возвращает 404", func() {
 		body := favorites.RemoveFromFavorites(s.T(), s.mainUser.Token, nonExistentUUID, http.StatusNotFound)
-		require.NotEmpty(s.T(), gjson.GetBytes(body, "error").String(), "Поле error не должно быть пустым")
+		assertions.AssertErrorResponse(s.T(), body, errCodeNotFound, "Favorite entry not found", "DELETE /favorites/{ad_id} (несуществующий ID)")
 	})
 }
 
@@ -136,39 +138,48 @@ func (s *FavoritesSuite) TestFavoritesBusinessConstraintsNegative() {
 
 	s.Run("Попытка добавить собственное объявление в избранное возвращает 403 Forbidden", func() {
 		body := favorites.AddToFavorites(s.T(), s.mainUser.Token, ownAd.ID, http.StatusForbidden)
-		require.NotEmpty(s.T(), gjson.GetBytes(body, "error").String(), "Ожидалось сообщение об ошибке при добавлении своего объявления")
+		assertions.AssertErrorResponse(s.T(), body, errCodeForbidden, "Cannot add own advertisement to favorites", "POST /favorites (собственное объявление)")
 	})
 
 	s.Run("Повторное добавление того же объявления в избранное возвращает 409 Conflict", func() {
 		favorites.AddToFavorites(s.T(), s.mainUser.Token, sellerAd.ID, http.StatusCreated)
 		body := favorites.AddToFavorites(s.T(), s.mainUser.Token, sellerAd.ID, http.StatusConflict)
-		require.NotEmpty(s.T(), gjson.GetBytes(body, "error").String(), "Ожидалось сообщение о конфликте при повторном добавлении")
+		assertions.AssertErrorResponse(s.T(), body, errCodeAlreadyExists, "Advertisement is already in favorites", "POST /favorites (повторное добавление)")
 	})
 }
 
 func (s *FavoritesSuite) TestFavoritesUnauthorizedNegative() {
 	cases := []struct {
-		name  string
-		token string
+		name            string
+		token           string
+		expectedMessage string
 	}{
-		{name: "Без токена авторизации", token: ""},
-		{name: "С некорректным токеном", token: invalidBearerToken},
+		{
+			name:            "Без токена авторизации",
+			token:           "",
+			expectedMessage: "Authorization header required",
+		},
+		{
+			name:            "С некорректным токеном",
+			token:           invalidBearerToken,
+			expectedMessage: "Invalid or expired token",
+		},
 	}
 
 	for _, tc := range cases {
 		s.Run("GET /favorites "+tc.name, func() {
 			body := favorites.GetFavoritesRaw(s.T(), tc.token, http.StatusUnauthorized)
-			require.NotEmpty(s.T(), gjson.GetBytes(body, "error").String())
+			assertions.AssertErrorResponse(s.T(), body, errCodeUnauthorized, tc.expectedMessage, "GET /favorites ("+tc.name+")")
 		})
 
 		s.Run("POST /favorites "+tc.name, func() {
 			body := favorites.AddToFavorites(s.T(), tc.token, nonExistentUUID, http.StatusUnauthorized)
-			require.NotEmpty(s.T(), gjson.GetBytes(body, "error").String())
+			assertions.AssertErrorResponse(s.T(), body, errCodeUnauthorized, tc.expectedMessage, "POST /favorites ("+tc.name+")")
 		})
 
 		s.Run("DELETE /favorites/{ad_id} "+tc.name, func() {
 			body := favorites.RemoveFromFavorites(s.T(), tc.token, nonExistentUUID, http.StatusUnauthorized)
-			require.NotEmpty(s.T(), gjson.GetBytes(body, "error").String())
+			assertions.AssertErrorResponse(s.T(), body, errCodeUnauthorized, tc.expectedMessage, "DELETE /favorites/{ad_id} ("+tc.name+")")
 		})
 	}
 }

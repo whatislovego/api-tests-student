@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"api-tests-template/internal/assertions"
 	adClient "api-tests-template/internal/client/http/advertisements"
 	"api-tests-template/internal/managers/advertisements"
 	"api-tests-template/internal/managers/advertisements/models"
@@ -18,7 +19,6 @@ import (
 
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
-	"github.com/tidwall/gjson"
 )
 
 const (
@@ -27,6 +27,10 @@ const (
 	defaultAdQuantity    = 3
 	maxTitleLength       = 50
 	invalidToken         = "invalid_bearer_token"
+	testPhotoFile        = "test_photo.png"
+
+	errCodeInvalidRequest = "invalid_request"
+	errCodeUnauthorized   = "unauthorized"
 )
 
 type CreateAdvertisementSuite struct {
@@ -50,9 +54,8 @@ func (s *CreateAdvertisementSuite) TearDownSuite() {
 
 func (s *CreateAdvertisementSuite) TestCreateAdvertisementPositive() {
 	parentT := s.T()
-	tests.Precondition("Подготовка уникальных данных и тестового изображения")
+	tests.Precondition("Подготовка уникальных данных для создания объявления")
 	uniqueTitle := fmt.Sprintf("Тестовый товар %d", time.Now().UnixNano())
-	photoPath := utils.CreateTempPNGFile(parentT, "test_photo.png")
 	price := defaultAdPrice
 	quantity := defaultAdQuantity
 
@@ -61,7 +64,7 @@ func (s *CreateAdvertisementSuite) TestCreateAdvertisementPositive() {
 		Description: defaultAdDescription,
 		Price:       &price,
 		Quantity:    &quantity,
-		PhotoPaths:  []string{photoPath},
+		PhotoPaths:  []string{testPhotoFile},
 	}
 
 	var createdAd models.Advertisement
@@ -108,13 +111,13 @@ func (s *CreateAdvertisementSuite) TestCreateAdvertisementPositive() {
 }
 
 func (s *CreateAdvertisementSuite) TestCreateAdvertisementNegativeValidation() {
-	photoPath := utils.CreateTempPNGFile(s.T(), "neg_photo.png")
 	negativePrice := -100.0
 	validPrice := defaultAdPrice
 
 	cases := []struct {
-		name   string
-		params adClient.CreateAdvertisementFormParams
+		name            string
+		params          adClient.CreateAdvertisementFormParams
+		expectedMessage string
 	}{
 		{
 			name: "Пустой обязательный параметр title",
@@ -122,8 +125,9 @@ func (s *CreateAdvertisementSuite) TestCreateAdvertisementNegativeValidation() {
 				Title:       "",
 				Description: defaultAdDescription,
 				Price:       &validPrice,
-				PhotoPaths:  []string{photoPath},
+				PhotoPaths:  []string{testPhotoFile},
 			},
+			expectedMessage: "title is required",
 		},
 		{
 			name: "Пустой обязательный параметр description",
@@ -131,8 +135,9 @@ func (s *CreateAdvertisementSuite) TestCreateAdvertisementNegativeValidation() {
 				Title:       "Валидное название",
 				Description: "",
 				Price:       &validPrice,
-				PhotoPaths:  []string{photoPath},
+				PhotoPaths:  []string{testPhotoFile},
 			},
+			expectedMessage: "description is required",
 		},
 		{
 			name: "Отсутствует обязательная фотография",
@@ -142,6 +147,7 @@ func (s *CreateAdvertisementSuite) TestCreateAdvertisementNegativeValidation() {
 				Price:       &validPrice,
 				PhotoPaths:  nil,
 			},
+			expectedMessage: "at least 1 photo is required",
 		},
 		{
 			name: "Отрицательная цена",
@@ -149,8 +155,9 @@ func (s *CreateAdvertisementSuite) TestCreateAdvertisementNegativeValidation() {
 				Title:       "Объявление с отрицательной ценой",
 				Description: defaultAdDescription,
 				Price:       &negativePrice,
-				PhotoPaths:  []string{photoPath},
+				PhotoPaths:  []string{testPhotoFile},
 			},
+			expectedMessage: "price must be between 0 and 1000000 inclusive",
 		},
 		{
 			name: "Слишком длинный title (больше 50 символов)",
@@ -158,46 +165,51 @@ func (s *CreateAdvertisementSuite) TestCreateAdvertisementNegativeValidation() {
 				Title:       strings.Repeat("A", maxTitleLength+1),
 				Description: defaultAdDescription,
 				Price:       &validPrice,
-				PhotoPaths:  []string{photoPath},
+				PhotoPaths:  []string{testPhotoFile},
 			},
+			expectedMessage: "title must not exceed 50 characters provided 51",
 		},
 	}
 
 	for _, tc := range cases {
 		s.Run(tc.name, func() {
 			body := advertisements.CreateAdvertisementRaw(s.T(), s.loginData.Token, tc.params, http.StatusBadRequest)
-			errField := gjson.GetBytes(body, "error").String()
-			msgField := gjson.GetBytes(body, "message").String()
-			require.Truef(s.T(), errField != "" || msgField != "", "Ожидалось сообщение об ошибке в ответе: %s", string(body))
+			assertions.AssertErrorResponse(s.T(), body, errCodeInvalidRequest, tc.expectedMessage, "POST /advertisement ("+tc.name+")")
 		})
 	}
 }
 
 func (s *CreateAdvertisementSuite) TestCreateAdvertisementUnauthorized() {
-	photoPath := utils.CreateTempPNGFile(s.T(), "unauth_photo.png")
 	validPrice := defaultAdPrice
 
 	params := adClient.CreateAdvertisementFormParams{
 		Title:       "Объявление без авторизации",
 		Description: defaultAdDescription,
 		Price:       &validPrice,
-		PhotoPaths:  []string{photoPath},
+		PhotoPaths:  []string{testPhotoFile},
 	}
 
 	cases := []struct {
-		name  string
-		token string
+		name            string
+		token           string
+		expectedMessage string
 	}{
-		{name: "Отсутствующий токен", token: ""},
-		{name: "Некорректный токен", token: invalidToken},
+		{
+			name:            "Отсутствующий токен",
+			token:           "",
+			expectedMessage: "Authorization header required",
+		},
+		{
+			name:            "Некорректный токен",
+			token:           invalidToken,
+			expectedMessage: "Invalid or expired token",
+		},
 	}
 
 	for _, tc := range cases {
 		s.Run(tc.name, func() {
 			body := advertisements.CreateAdvertisementRaw(s.T(), tc.token, params, http.StatusUnauthorized)
-			errField := gjson.GetBytes(body, "error").String()
-			msgField := gjson.GetBytes(body, "message").String()
-			require.Truef(s.T(), errField != "" || msgField != "", "Ожидалось сообщение об ошибке 401 в ответе: %s", string(body))
+			assertions.AssertErrorResponse(s.T(), body, errCodeUnauthorized, tc.expectedMessage, "POST /advertisement ("+tc.name+")")
 		})
 	}
 }
